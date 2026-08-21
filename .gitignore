@@ -1,0 +1,17 @@
+# Virtualenv
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Editors / macOS
+.idea/
+.vscode/
+.DS_Store

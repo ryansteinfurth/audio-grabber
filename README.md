@@ -1,7 +1,7 @@
 # Audio Grabber
 
 Downloads audio from YouTube, SoundCloud, and most other sites yt-dlp supports,
-saved as mp3, m4a, opus, flac, or wav with metadata and cover art embedded.
+saved as mp3, m4a, opus, flac, wav, or aiff with metadata and cover art embedded.
 
 Two front ends over the same engine:
 
@@ -37,7 +37,7 @@ python3 -m venv .venv
 
 ```
 --out FOLDER                 destination folder, skips the prompt
---format {mp3,m4a,opus,flac,wav}
+--format {mp3,m4a,opus,flac,wav,aiff}
 --quality 192                kbps, ignored for the lossless formats
 --cookies-from-browser NAME  safari, chrome, firefox, ... or none
 ```

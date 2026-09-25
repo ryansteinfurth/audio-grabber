@@ -20,7 +20,7 @@ from tkinter import filedialog, messagebox, ttk
 import script  # probe(), download(), cookie helpers, config, CODECS, BROWSERS
 
 # Bitrate is meaningless for these, so grey the field out.
-LOSSLESS = {"wav", "flac"}
+LOSSLESS = {"wav", "flac", "aiff"}
 
 NO_COOKIES = "none"
 

@@ -5,7 +5,7 @@ script.py - interactive personal audio downloader.
 Asks for a destination folder once, then loops:
     URL  ->  confirm/edit filename (prefilled with the track title)  ->  download
 
-Requires:  pip install -U yt-dlp
+Requires:  pip install -U yt-dlp mutagen
            ffmpeg on PATH  (brew install ffmpeg | apt install ffmpeg)
 
 Usage:
@@ -30,6 +30,7 @@ from pathlib import Path
 
 import yt_dlp
 from yt_dlp.cookies import SUPPORTED_BROWSERS as _BROWSERS
+from yt_dlp.postprocessor import PostProcessor
 
 BROWSERS = sorted(_BROWSERS)
 
@@ -52,8 +53,8 @@ _use_bundled_ffmpeg()
 # Illegal on Windows, awkward everywhere else.
 ILLEGAL = r'[<>:"/\\|?*\x00-\x1f]'
 
-CODECS = ["mp3", "m4a", "opus", "flac", "wav"]
-ART_CAPABLE = {"mp3", "m4a", "flac"}
+CODECS = ["mp3", "m4a", "opus", "flac", "wav", "aiff"]
+ART_CAPABLE = {"mp3", "m4a", "flac", "aiff"}
 
 
 # ---------------------------------------------------------------- remembered settings
@@ -342,15 +343,63 @@ def probe(url: str, cookies=None) -> dict | None:
     return info
 
 
+class AiffTagsPP(PostProcessor):
+    """Title, artist, album and cover for AIFF, written as an ID3 chunk.
+
+    ffmpeg only fills AIFF's native NAME/AUTH chunks, which rekordbox and most
+    DJ software ignore, and EmbedThumbnail refuses AIFF outright."""
+
+    def run(self, info):
+        from mutagen.aiff import AIFF
+        from mutagen.id3 import APIC, COMM, TALB, TIT2, TPE1
+
+        audio = AIFF(info["filepath"])
+        if audio.tags is None:
+            audio.add_tags()
+        tags = audio.tags
+
+        artist = (info.get("artist") or ", ".join(info.get("artists") or [])
+                  or info.get("creator") or info.get("uploader") or info.get("channel"))
+        for frame, value in ((TIT2, info.get("track") or info.get("title")),
+                             (TPE1, artist),
+                             (TALB, info.get("album"))):
+            if value:
+                tags.setall(frame.__name__, [frame(encoding=3, text=str(value))])
+        if info.get("webpage_url"):
+            tags.setall("COMM", [COMM(encoding=3, lang="eng", desc="", text=info["webpage_url"])])
+
+        # Same lookup EmbedThumbnail uses: the last thumbnail actually written.
+        leftovers = []
+        thumb = next((t["filepath"] for t in reversed(info.get("thumbnails") or [])
+                      if t.get("filepath") and os.path.exists(t["filepath"])), None)
+        if thumb:
+            mime = "image/png" if thumb.lower().endswith(".png") else "image/jpeg"
+            with open(thumb, "rb") as f:
+                tags.setall("APIC", [APIC(encoding=3, mime=mime, type=3, desc="Cover", data=f.read())])
+            leftovers.append(thumb)
+
+        audio.save()
+        return leftovers, info
+
+
 def download(url: str, out_dir: Path, stem: str, codec: str, quality: str, cookies=None,
              progress=None, postprocess=None) -> bool:
     """progress/postprocess are yt-dlp hooks; the GUI uses them to drive its bar."""
-    postprocessors = [
-        {"key": "FFmpegExtractAudio", "preferredcodec": codec, "preferredquality": quality},
-        {"key": "FFmpegMetadata", "add_metadata": True},
-    ]
-    if codec in ART_CAPABLE:
-        postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
+    if codec == "aiff":
+        # FFmpegExtractAudio has no AIFF target, so extract lossless WAV and
+        # convert that. Tags and art come from AiffTagsPP, added below.
+        postprocessors = [
+            {"key": "FFmpegThumbnailsConvertor", "format": "jpg", "when": "before_dl"},
+            {"key": "FFmpegExtractAudio", "preferredcodec": "wav"},
+            {"key": "FFmpegVideoConvertor", "preferedformat": "aiff"},
+        ]
+    else:
+        postprocessors = [
+            {"key": "FFmpegExtractAudio", "preferredcodec": codec, "preferredquality": quality},
+            {"key": "FFmpegMetadata", "add_metadata": True},
+        ]
+        if codec in ART_CAPABLE:
+            postprocessors.append({"key": "EmbedThumbnail", "already_have_thumbnail": False})
 
     # outtmpl is %-templated, so a literal % in the user's name must be doubled.
     safe_stem = stem.replace("%", "%%")
@@ -373,6 +422,8 @@ def download(url: str, out_dir: Path, stem: str, codec: str, quality: str, cooki
         opts["postprocessor_hooks"] = [postprocess]
 
     with yt_dlp.YoutubeDL(opts) as ydl:
+        if codec == "aiff":
+            ydl.add_post_processor(AiffTagsPP(), when="post_process")
         try:
             return ydl.download([url]) == 0
         except KeyboardInterrupt:
